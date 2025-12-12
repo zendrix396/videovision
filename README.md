@@ -1,49 +1,87 @@
-# Video Remastering Tool
+# VideoVision
 
-This is a Python script that uses the Replicate GFG-GAN API to remaster a video frame by frame. The script accepts the file name of a video as input and outputs a remastered version of the video. 
+High-performance video upscaling inference wrapper for Real-ESRGAN. Optimizes throughput by combining deep learning inference with dense optical flow warping.
 
-## Dependencies
+Includes a demo clip in `inputs/onepiece_demo.mp4` for immediate testing.
 
-To use this script, you will need to install the following dependencies: 
-- OpenCV (`cv2`)
-- Replicate (`replicate`)
-- Base64 (`base64`)
-- Requests (`requests`)
-- Glob (`glob`)
-- FFmpeg (`ffmpeg`)
+### Optimization Strategy
 
-You can install these dependencies using `pip` by running the following command:
+Standard upscalers run heavy model inference on every frame. VideoVision reduces computational load via:
 
+*   **Optical Flow Warping:** Reuses high-resolution features from previous frames by calculating pixel motion (dense optical flow) and warping the result. Reduces GPU load significantly.
+*   **Scene Change Detection:** Monitors frame difference histograms. Automatically forces a full inference refresh when a scene cut is detected to prevent ghosting artifacts.
+*   **Variable Inference Intervals:** Configurable keyframe ratios allowing users to trade temporal stability for raw throughput (e.g., infer 1 frame, warp 3 frames).
+
+```mermaid   
+%%{init: {'theme': 'base', 'themeVariables': { 'darkMode': true, 'fontFamily': 'arial', 'primaryColor': '#000', 'textColor': '#fff', 'lineColor': '#fff', 'signalColor': '#fff', 'actorBkg': '#000', 'actorBorder': '#fff', 'noteBkg': '#222', 'noteBorder': '#fff'}}}%%
+sequenceDiagram
+    autonumber
+    
+    participant In as Video Input
+    participant Brain as 🧠 The Logic
+    participant GPU as 🔴 AI Engine
+    participant CPU as 🟢 Warp Engine
+    participant Out as Output File
+
+    In->>Brain: Read Next Frame
+    
+    Note right of Brain: 1. Calculate Diff Score<br/>2. Check Keyframe Timer
+
+    alt High Quality Needed
+        Brain->>GPU: Send Raw Frame
+        GPU-->>Brain: Return Clean Upscale
+    else Optimization Mode
+        Brain->>CPU: Send Previous Frame
+        CPU-->>Brain: Return Warped Frame
+    end
+
+    Brain->>Out: Write to MP4
+    Brain->>Brain: Update History Buffer
+```
+### Usage
+
+The interface simplifies model selection and tiling parameters.
+
+**Anime (Balanced Speed/Quality)**
+Runs inference every 2nd frame, warps intermediate frames.
 ```bash
-pip install opencv-python replicate base64 requests glob ffmpeg
+python videovision.py -i inputs/onepiece_demo.mp4 --mode anime --speed balanced
 ```
 
+**High Throughput**
+Runs inference every 4th frame. Best for limited hardware or high-framerate source material.
+```bash
+python videovision.py -i inputs/onepiece_demo.mp4 --mode anime --speed fastest
+```
 
-## How to Use
+**General / Live Action (Max Quality)**
+Disables warping. Runs inference on every frame. Includes GFPGAN face enhancement.
+```bash
+python videovision.py -i inputs/my_vlog.mp4 --mode general --face_enhance --speed slow
+```
 
-To use this script, follow these steps: 
-1. Clone or download this repository. 
-2. Open a terminal window and navigate to the directory containing the script. 
-3. Set your Replicate API token as an environment variable by running the following command:
+### Configuration
+
+| Argument | Options | Description |
+| :--- | :--- | :--- |
+| `--mode` | `anime`, `general` | Selects appropriate Real-ESRGAN checkpoint. |
+| `--speed` | `slow` | Full inference every frame. No warping. |
+| | `balanced` | Inference every 2nd frame. 2x theoretical throughput. |
+| | `fastest` | Inference every 4th frame. 4x theoretical throughput. |
+| `-s` | `2`, `4` | Upscaling factor. |
+| `-t` | `0`, `400`, `256` | Tile size. Lower this value to reduce VRAM usage. |
+| `--face_enhance` | Flag | Enables GFPGAN. Only available in `general` mode. |
+
+### Installation
+
+Requires standard Real-ESRGAN dependencies.
 
 ```bash
-export REPLICATE_API_TOKEN=your_api_token
+pip install -r requirements.txt
+python setup.py develop
 ```
-4. Run the script using the following command:
 
-```bash
+### Credits
 
-python videovision.py
-```
-5. When prompted, enter the file name of the video you want to remaster. 
-
-The script will then convert the video into individual frames, send each frame to the Replicate GFG-GAN model for prediction, and output a remastered version of the video. The remastered video will be saved in the same directory as the script under the file name `output.mp4`. 
-
-## Notes
-
-- The Replicate GFG-GAN model used in this script is the `tencentarc/gfpgan` model with the `9283608cc6b7be6b65a8e44983db012355fde4132009bf99d976b2f0896856a3` version.
-- This script assumes that the input video is in the same directory as the script. 
-- The output video will be in MP4 format and will have the same frame rate as the input video.
-
-# Disclaimer
-With this free API, you can edit a limited number of images. If you have a large number of files, you can purchase the paid version of the API
+Wrapper around [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN).
+Optical flow implementation uses OpenCV Farneback algorithm.
